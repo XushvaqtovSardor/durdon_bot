@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: durdona_data
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 12345
+      POSTGRES_DB: durdona
+    ports:
+      - "5434:5432"
+    volumes:
+      - baza_data:/var/lib/postgresql/data
+  app:
+    build: .
+    container_name: durdona_bot
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "3002:3000"
+    depends_on:
+      - db
+    command: >
+      sh -c "
+        npx prisma generate &&
+        npx prisma migrate deploy &&
+        pnpm run start:dev
+      "
+
+volumes:
+  baza_data:
