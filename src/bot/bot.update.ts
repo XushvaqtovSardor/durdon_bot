@@ -40,30 +40,35 @@ export class BotUpdate implements OnModuleInit {
     private async loadSuperAdminFromEnv() {
         const superAdminId = process.env.SUPERADMIN_ID;
         if (superAdminId) {
-            try {
-                const telegramId = BigInt(superAdminId);
-                let user = await this.prisma.user.findUnique({
-                    where: { telegramId },
-                });
+            // Split by comma to support multiple admin IDs
+            const adminIds = superAdminId.split(',').map(id => id.trim()).filter(id => id);
 
-                if (!user) {
-                    user = await this.prisma.user.create({
-                        data: {
-                            telegramId,
-                            fullName: 'SuperAdmin',
-                            role: Role.SUPERADMIN,
-                        },
-                    });
-                    this.logger.log(`SuperAdmin created: ${superAdminId}`);
-                } else if (user.role !== Role.SUPERADMIN) {
-                    await this.prisma.user.update({
+            for (const idString of adminIds) {
+                try {
+                    const telegramId = BigInt(idString);
+                    let user = await this.prisma.user.findUnique({
                         where: { telegramId },
-                        data: { role: Role.SUPERADMIN },
                     });
-                    this.logger.log(`User promoted to SuperAdmin: ${superAdminId}`);
+
+                    if (!user) {
+                        user = await this.prisma.user.create({
+                            data: {
+                                telegramId,
+                                fullName: 'SuperAdmin',
+                                role: Role.SUPERADMIN,
+                            },
+                        });
+                        this.logger.log(`SuperAdmin created: ${idString}`);
+                    } else if (user.role !== Role.SUPERADMIN) {
+                        await this.prisma.user.update({
+                            where: { telegramId },
+                            data: { role: Role.SUPERADMIN },
+                        });
+                        this.logger.log(`User promoted to SuperAdmin: ${idString}`);
+                    }
+                } catch (error) {
+                    this.logger.error(`Failed to load SuperAdmin ${idString}:`, error);
                 }
-            } catch (error) {
-                this.logger.error('Failed to load SuperAdmin:', error);
             }
         }
     }
