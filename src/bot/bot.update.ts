@@ -14,6 +14,7 @@ interface SessionData {
     adminAction?: 'ADD_PRODUCT_NAME' | 'ADD_PRODUCT_QUANTITY' | 'UPDATE_STOCK' | 'ADD_FACULTY' | 'ADD_ADMIN';
     adminProductName?: string;
     adminProductId?: number;
+    selectedRole?: Role;
 }
 
 @Update()
@@ -189,6 +190,12 @@ export class BotUpdate implements OnModuleInit {
                 if (this.isSuperAdmin(user)) {
                     await this.startAddAdmin(ctx);
                 }
+            } else if (data === 'admin_select_role_admin' && ctx.from) {
+                await this.handleRoleSelection(ctx, Role.ADMIN);
+            } else if (data === 'admin_select_role_superadmin' && ctx.from) {
+                await this.handleRoleSelection(ctx, Role.SUPERADMIN);
+            } else if (data.startsWith('admin_remove_') && ctx.from) {
+                await this.handleRemoveAdmin(ctx);
             } else if (data.startsWith('admin_complete_order_')) {
                 await this.completeOrder(ctx);
             }
@@ -776,15 +783,21 @@ export class BotUpdate implements OnModuleInit {
         });
 
         let message = '👥 ADMINLAR\n\n';
+        const keyboard = new InlineKeyboard();
 
         for (const admin of admins) {
             const roleEmoji = admin.role === Role.SUPERADMIN ? '👑' : '⚙️';
             message += `${roleEmoji} @${admin.username || admin.fullName}\n`;
             message += `ID: ${admin.telegramId}\n`;
             message += `Rol: ${admin.role}\n\n`;
+
+            // Any SUPERADMIN can remove any admin or superadmin
+            keyboard
+                .text(`❌ ${admin.username || admin.fullName}`, `admin_remove_${admin.telegramId}`)
+                .row();
         }
 
-        const keyboard = new InlineKeyboard()
+        keyboard
             .text('➕ Admin qo\'shish', 'admin_add_admin')
             .row()
             .text('⬅️ Orqaga', 'back_to_admin');
@@ -795,17 +808,23 @@ export class BotUpdate implements OnModuleInit {
     private async startAddAdmin(ctx: any) {
         if (!ctx.from) return;
 
-        const session = this.getSession(ctx.from.id);
-        session.adminAction = 'ADD_ADMIN';
+        const keyboard = new InlineKeyboard()
+            .text('⚙️ ADMIN', 'admin_select_role_admin')
+            .row()
+            .text('👑 SUPERADMIN', 'admin_select_role_superadmin')
+            .row()
+            .text('❌ Bekor qilish', 'admin_manage_admins');
 
-        await ctx.editMessageText('Yangi admin Telegram ID sini kiriting:', {
-            reply_markup: new InlineKeyboard().text('❌ Bekor qilish', 'admin_manage_admins'),
+        await ctx.editMessageText('Qaysi rol qo\'shmoqchisiz?', {
+            reply_markup: keyboard,
         });
     }
 
     private async handleAddAdmin(ctx: Context, text: string) {
         if (!ctx.from) return;
 
+        const session = this.getSession(ctx.from.id);
+        const roleToAssign = session.selectedRole || Role.ADMIN;
         const telegramId = text.trim();
 
         if (!/^\d+$/.test(telegramId)) {
@@ -820,33 +839,37 @@ export class BotUpdate implements OnModuleInit {
 
             if (user) {
                 if (user.role !== Role.USER) {
-                    await ctx.reply('❌ Bu foydalanuvchi allaqachon admin!');
+                    await ctx.reply('❌ Bu foydalanuvchi allaqachon admin yoki superadmin!');
                     return;
                 }
 
                 await this.prisma.user.update({
                     where: { telegramId: BigInt(telegramId) },
-                    data: { role: Role.ADMIN },
+                    data: { role: roleToAssign },
                 });
             } else {
                 user = await this.prisma.user.create({
                     data: {
                         telegramId: BigInt(telegramId),
-                        fullName: 'Admin',
-                        role: Role.ADMIN,
+                        fullName: roleToAssign === Role.SUPERADMIN ? 'SuperAdmin' : 'Admin',
+                        role: roleToAssign,
                     },
                 });
             }
 
-            await ctx.reply(`✅ Yangi admin qo'shildi!\n\nID: ${telegramId}`, {
+            const roleText = roleToAssign === Role.SUPERADMIN ? 'SUPERADMIN 👑' : 'ADMIN ⚙️';
+            await ctx.reply(`✅ Yangi ${roleText} qo'shildi!\n\nID: ${telegramId}`, {
                 reply_markup: new InlineKeyboard().text('⬅️ Adminlar', 'admin_manage_admins'),
             });
 
             // Notify new admin
             try {
+                const notificationText = roleToAssign === Role.SUPERADMIN
+                    ? '🎉 Siz SuperAdmin qildingiz!\n\nBotni qayta ishga tushiring: /start'
+                    : '🎉 Siz admin qildingiz!\n\nBotni qayta ishga tushiring: /start';
                 await this.bot.api.sendMessage(
                     parseInt(telegramId),
-                    '🎉 Siz admin qildingiz!\n\nBotni qayta ishga tushiring: /start',
+                    notificationText,
                 );
             } catch (error) {
                 // User hasn't started the bot yet
@@ -856,6 +879,69 @@ export class BotUpdate implements OnModuleInit {
         } catch (error) {
             this.logger.error('Add admin error:', error);
             await ctx.reply('❌ Xatolik yuz berdi!');
+        }
+    }
+
+    private async handleRoleSelection(ctx: any, role: Role) {
+        if (!ctx.from) return;
+
+        const session = this.getSession(ctx.from.id);
+        session.adminAction = 'ADD_ADMIN';
+        session.selectedRole = role;
+
+        const roleText = role === Role.SUPERADMIN ? 'SUPERADMIN 👑' : 'ADMIN ⚙️';
+        await ctx.editMessageText(`Yangi ${roleText} Telegram ID sini kiriting:`, {
+            reply_markup: new InlineKeyboard().text('❌ Bekor qilish', 'admin_manage_admins'),
+        });
+    }
+
+    private async handleRemoveAdmin(ctx: any) {
+        if (!ctx.from || !ctx.callbackQuery?.data) return;
+
+        // Check if current user is SUPERADMIN
+        const currentUser = await this.getOrCreateUser(ctx);
+        if (!this.isSuperAdmin(currentUser)) {
+            await ctx.answerCallbackQuery('❌ Sizda ruxsat yo\'q!');
+            return;
+        }
+
+        const telegramIdToRemove = BigInt(ctx.callbackQuery.data.split('_')[2]);
+
+        try {
+            const userToRemove = await this.prisma.user.findUnique({
+                where: { telegramId: telegramIdToRemove },
+            });
+
+            if (!userToRemove) {
+                await ctx.answerCallbackQuery('❌ Foydalanuvchi topilmadi!');
+                return;
+            }
+
+            // Update user role to USER (demote them)
+            await this.prisma.user.update({
+                where: { telegramId: telegramIdToRemove },
+                data: { role: Role.USER },
+            });
+
+            const roleText = userToRemove.role === Role.SUPERADMIN ? 'SUPERADMIN 👑' : 'ADMIN ⚙️';
+
+            // Notify the removed admin
+            try {
+                await this.bot.api.sendMessage(
+                    Number(telegramIdToRemove),
+                    `⚠️ Sizning ${roleText} huquqlaringiz olib tashlandi.`,
+                );
+            } catch (error) {
+                // User may have blocked bot
+            }
+
+            await ctx.answerCallbackQuery(`✅ ${roleText} o'chirildi!`);
+
+            // Refresh the admin list
+            await this.showManageAdmins(ctx);
+        } catch (error) {
+            this.logger.error('Remove admin error:', error);
+            await ctx.answerCallbackQuery('❌ Xatolik yuz berdi!');
         }
     }
 
