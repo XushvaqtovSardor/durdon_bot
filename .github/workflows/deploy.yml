@@ -26,18 +26,18 @@ jobs:
             mkdir -p /root
             cd /root
 
-            if [ ! -d "db_bot3/.git" ]; then
+            if [ ! -d "durdon_bot/.git" ]; then
               echo "Cloning repository!"
-              git clone https://github.com/XushvaqtovSardor/db_bot3
+              git clone https://github.com/XushvaqtovSardor/durdon_bot
             else
               echo "Pulling latest changes!"
-              cd db_bot3
+              cd durdon_bot
               git pull origin main
               cd ..
             fi
 
             # ALWAYS enter project directory
-            cd db_bot3
+            cd durdon_bot
 
             echo "Stopping containers"
             docker compose down
