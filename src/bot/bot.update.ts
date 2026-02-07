@@ -64,7 +64,7 @@ export class BotUpdate implements OnModuleInit {
                             where: { telegramId },
                             data: { role: Role.SUPERADMIN },
                         });
-                        this.logger.log(`User promoted to SuperAdmin: ${idString}`);
+                        this.logger.log(`User promoted  to SuperAdmin: ${idString}`);
                     }
                 } catch (error) {
                     this.logger.error(`Failed to load SuperAdmin ${idString}:`, error);
