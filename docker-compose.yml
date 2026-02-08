@@ -8,11 +8,12 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: durdona56
-      POSTGRES_DB: durdona2
+      POSTGRES_DB: postgres   # default db
     ports:
       - "5434:5432"
     volumes:
       - baza_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -25,14 +26,12 @@ services:
     restart: always
     env_file:
       - .env
-    expose:
-      - "3002"
     depends_on:
       db:
         condition: service_healthy
     command: >
       sh -c "
-        pnpm run build
+        pnpm run build &&
         npx prisma generate &&
         npx prisma migrate deploy &&
         pnpm run start:prod

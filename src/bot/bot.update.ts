@@ -11,7 +11,7 @@ interface SessionData {
     comment?: string;
 
     // Admin states
-    adminAction?: 'ADD_PRODUCT_NAME' | 'ADD_PRODUCT_QUANTITY' | 'UPDATE_STOCK' | 'ADD_FACULTY' | 'ADD_ADMIN';
+    adminAction?: 'ADD_PRODUCT_NAME' | 'ADD_PRODUCT_QUANTITY' | 'UPDATE_STOCK' | 'ADD_FACULTY' | 'ADD_ADMIN' | 'TRANSFER_SUPERADMIN';
     adminProductName?: string;
     adminProductId?: number;
     selectedRole?: Role;
@@ -196,6 +196,11 @@ export class BotUpdate implements OnModuleInit {
                 await this.handleRoleSelection(ctx, Role.SUPERADMIN);
             } else if (data.startsWith('admin_remove_') && ctx.from) {
                 await this.handleRemoveAdmin(ctx);
+            } else if (data === 'admin_transfer' && ctx.from) {
+                const user = await this.getOrCreateUser(ctx);
+                if (this.isSuperAdmin(user)) {
+                    await this.startTransfer(ctx);
+                }
             } else if (data.startsWith('admin_complete_order_')) {
                 await this.completeOrder(ctx);
             }
@@ -303,6 +308,10 @@ export class BotUpdate implements OnModuleInit {
         }
         if (session.adminAction === 'ADD_ADMIN') {
             await this.handleAddAdmin(ctx, text);
+            return;
+        }
+        if (session.adminAction === 'TRANSFER_SUPERADMIN') {
+            await this.handleTransfer(ctx, text);
             return;
         }
 
@@ -436,7 +445,9 @@ export class BotUpdate implements OnModuleInit {
             .text('🏫 Fakultetlar', 'admin_faculties').row();
 
         if (this.isSuperAdmin(user)) {
-            keyboard.text('👥 Admin boshqaruvi', 'admin_manage_admins').row();
+            keyboard
+                .text('👥 Admin boshqaruvi', 'admin_manage_admins').row()
+                .text('🔄 Transfer qilish', 'admin_transfer').row();
         }
 
         const message = this.isSuperAdmin(user)
@@ -907,6 +918,12 @@ export class BotUpdate implements OnModuleInit {
 
         const telegramIdToRemove = BigInt(ctx.callbackQuery.data.split('_')[2]);
 
+        // Superadmin cannot remove themselves
+        if (currentUser.telegramId === telegramIdToRemove) {
+            await ctx.answerCallbackQuery('❌ Siz o\'zingizni chiqarib tashlay olmaysiz!');
+            return;
+        }
+
         try {
             const userToRemove = await this.prisma.user.findUnique({
                 where: { telegramId: telegramIdToRemove },
@@ -942,6 +959,107 @@ export class BotUpdate implements OnModuleInit {
         } catch (error) {
             this.logger.error('Remove admin error:', error);
             await ctx.answerCallbackQuery('❌ Xatolik yuz berdi!');
+        }
+    }
+
+    private async startTransfer(ctx: any) {
+        if (!ctx.from) return;
+
+        const currentUser = await this.getOrCreateUser(ctx);
+        if (!this.isSuperAdmin(currentUser)) {
+            await ctx.answerCallbackQuery('❌ Sizda ruxsat yo\'q!');
+            return;
+        }
+
+        const session = this.getSession(ctx.from.id);
+        session.adminAction = 'TRANSFER_SUPERADMIN';
+
+        await ctx.editMessageText(
+            '🔄 SUPERADMIN TRANSFER\n\n' +
+            '⚠️ DIQQAT: Bu komanda bilan siz superadmin huquqini boshqa foydalanuvchiga o\'tkazasiz va o\'zingiz oddiy user bo\'lib qolasiz!\n\n' +
+            'Yangi SUPERADMIN ning Telegram ID sini kiriting:',
+            {
+                reply_markup: new InlineKeyboard().text('❌ Bekor qilish', 'back_to_admin'),
+            }
+        );
+    }
+
+    private async handleTransfer(ctx: Context, text: string) {
+        if (!ctx.from) return;
+
+        const currentUser = await this.getOrCreateUser(ctx);
+        if (!this.isSuperAdmin(currentUser)) {
+            await ctx.reply('❌ Sizda ruxsat yo\'q!');
+            return;
+        }
+
+        const newSuperAdminId = text.trim();
+
+        if (!/^\d+$/.test(newSuperAdminId)) {
+            await ctx.reply('❌ Telegram ID faqat raqamlardan iborat bo\'lishi kerak!');
+            return;
+        }
+
+        const telegramId = BigInt(newSuperAdminId);
+
+        // Cannot transfer to yourself
+        if (currentUser.telegramId === telegramId) {
+            await ctx.reply('❌ Siz o\'zingizga transfer qila olmaysiz!');
+            return;
+        }
+
+        try {
+            let newSuperAdmin = await this.prisma.user.findUnique({
+                where: { telegramId },
+            });
+
+            // Create or update the new superadmin
+            if (newSuperAdmin) {
+                await this.prisma.user.update({
+                    where: { telegramId },
+                    data: { role: Role.SUPERADMIN },
+                });
+            } else {
+                newSuperAdmin = await this.prisma.user.create({
+                    data: {
+                        telegramId,
+                        fullName: 'SuperAdmin',
+                        role: Role.SUPERADMIN,
+                    },
+                });
+            }
+
+            // Demote current user to USER
+            await this.prisma.user.update({
+                where: { telegramId: currentUser.telegramId },
+                data: { role: Role.USER },
+            });
+
+            // Notify new superadmin
+            try {
+                await this.bot.api.sendMessage(
+                    Number(telegramId),
+                    '🎉 Tabriklaymiz! Siz yangi SUPERADMIN 👑 qildingiz!\n\n' +
+                    'Botni qayta ishga tushiring: /start'
+                );
+            } catch (error) {
+                // User hasn't started the bot yet
+            }
+
+            await ctx.reply(
+                '✅ SUPERADMIN huquqi muvaffaqiyatli o\'tkazildi!\n\n' +
+                `Yangi SUPERADMIN ID: ${newSuperAdminId}\n` +
+                'Siz endi oddiy foydalanuvchi statusiga egasiz.\n\n' +
+                'Botni qayta ishga tushiring: /start',
+                {
+                    reply_markup: new InlineKeyboard(),
+                }
+            );
+
+            this.clearSession(ctx.from.id);
+        } catch (error) {
+            this.logger.error('Transfer error:', error);
+            await ctx.reply('❌ Xatolik yuz berdi!');
         }
     }
 
