@@ -3,31 +3,39 @@ version: "3.9"
 services:
   db:
     image: postgres:16
-    container_name: durdona_data
+    container_name: dr_db
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: durdon56
-      POSTGRES_DB: durdona
+      POSTGRES_PASSWORD: durdona56
+      POSTGRES_DB: durdona2
     ports:
       - "5434:5432"
     volumes:
       - baza_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   app:
     build: .
-    container_name: durdona_bot
+    container_name: durdon_bot
     restart: always
     env_file:
       - .env
-    ports:
-      - "3002:3000"
+    expose:
+      - "3002"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command: >
       sh -c "
+        pnpm run build
         npx prisma generate &&
         npx prisma migrate deploy &&
-        pnpm run start:dev
+        pnpm run start:prod
       "
 
 volumes:
