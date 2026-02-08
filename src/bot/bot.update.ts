@@ -911,7 +911,7 @@ export class BotUpdate implements OnModuleInit {
 
         // Check if current user is SUPERADMIN
         const currentUser = await this.getOrCreateUser(ctx);
-        if (!this.isSuperAdmin(currentUser)) {
+        if (!currentUser || !this.isSuperAdmin(currentUser)) {
             await ctx.answerCallbackQuery('❌ Sizda ruxsat yo\'q!');
             return;
         }
@@ -988,7 +988,7 @@ export class BotUpdate implements OnModuleInit {
         if (!ctx.from) return;
 
         const currentUser = await this.getOrCreateUser(ctx);
-        if (!this.isSuperAdmin(currentUser)) {
+        if (!currentUser || !this.isSuperAdmin(currentUser)) {
             await ctx.reply('❌ Sizda ruxsat yo\'q!');
             return;
         }
